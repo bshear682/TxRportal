@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Mail;
 using System.Net;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace FileTransferApp
@@ -19,6 +20,7 @@ namespace FileTransferApp
             PopulateDestinations();
             rbNo.Checked = true; // Default to 'No'
             txtOtherUser.Enabled = false; // Disable textbox initially
+            progressBar.Visible = false; // Hide progress bar initially
         }
 
         private void btnBrowse_Click(object sender, EventArgs e)
@@ -53,7 +55,7 @@ namespace FileTransferApp
             return options.ToString().Trim();
         }
 
-        private void btnTransfer_Click(object sender, EventArgs e)
+        private async void btnTransfer_Click(object sender, EventArgs e)
         {
             if (string.IsNullOrEmpty(selectedFilePath))
             {
@@ -61,29 +63,37 @@ namespace FileTransferApp
                 return;
             }
 
-            string destinationPath = cmbDestination.SelectedItem.ToString();
+            string destinationRoot = cmbDestination.SelectedItem.ToString();
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HH-mm-ss");
+            string userFolderName = $"{Environment.UserName}_{timestamp}";
+            string destinationFolder = Path.Combine(destinationRoot, userFolderName);
+            string destinationFilePath = Path.Combine(destinationFolder, Path.GetFileName(selectedFilePath));
             string robocopyOptions = GetSelectedRobocopyOptions();
 
-            string transferUser = rbYes.Checked ? txtOtherUser.Text.Trim() : Environment.UserName;
-            if (rbYes.Checked && string.IsNullOrEmpty(transferUser))
-            {
-                MessageBox.Show("Please enter the name of the person you are transferring the file for.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+            Directory.CreateDirectory(destinationFolder); // Ensure destination folder exists
+
+            string transferUser = rbYes.Checked ? txtOtherUser.Text.Trim() : "";
+
+            progressBar.Visible = true;
+            progressBar.Style = ProgressBarStyle.Marquee;
 
             try
             {
-                RunRobocopy(selectedFilePath, destinationPath, robocopyOptions);
-                SendConfirmationEmail(Environment.UserName, Path.GetFileName(selectedFilePath), destinationPath, transferUser, robocopyOptions);
-                MessageBox.Show($"File transferred successfully to {destinationPath} on behalf of {transferUser} using Robocopy!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                txtFilePath.Clear();
-                txtOtherUser.Clear();
-                selectedFilePath = string.Empty;
-                rbNo.Checked = true; // Reset radio buttons
+                await Task.Run(() => RunRobocopy(selectedFilePath, destinationFolder, robocopyOptions));
+                SendConfirmationEmail(Environment.UserName, transferUser, destinationFilePath);
+                MessageBox.Show("File transfer request submitted successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
                 MessageBox.Show("Error: " + ex.Message, "Transfer Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                progressBar.Visible = false;
+                txtFilePath.Clear();
+                txtOtherUser.Clear();
+                selectedFilePath = string.Empty;
+                rbNo.Checked = true; // Reset radio buttons
             }
         }
 
@@ -100,7 +110,7 @@ namespace FileTransferApp
             robocopyProcess.WaitForExit();
         }
 
-        private void SendConfirmationEmail(string userName, string fileName, string destination, string transferUser, string robocopyOptions)
+        private void SendConfirmationEmail(string userName, string transferUser, string destinationFilePath)
         {
             try
             {
@@ -108,32 +118,22 @@ namespace FileTransferApp
                 SmtpClient smtpServer = new SmtpClient("your-exchange-server"); // Replace with your local Exchange server address
                 
                 mail.From = new MailAddress("no-reply@yourdomain.com"); // Replace with your domain
-                mail.To.Add($"{userName}@yourdomain.com"); // Replace with actual domain
-                mail.Subject = "File Transfer Confirmation";
+                mail.To.Add("CYBERSECURITY@domain.com"); // Send to cybersecurity team
+                mail.CC.Add($"{userName}@yourdomain.com"); // CC the requesting user
+                mail.Subject = "File Transfer Request";
                 
                 string emailBody = $@"<html>
                     <head>
                         <style>
                             body {{ font-family: Arial, sans-serif; }}
-                            .header {{ background-color: #0073e6; color: white; padding: 10px; text-align: center; }}
                             .content {{ padding: 15px; }}
-                            .footer {{ margin-top: 20px; font-size: 12px; color: #666; text-align: center; }}
                         </style>
                     </head>
                     <body>
-                        <div class='header'>
-                            <h2>File Transfer Confirmation</h2>
-                        </div>
                         <div class='content'>
-                            <p>Hello {userName},</p>
-                            <p>Your file <strong>'{fileName}'</strong> has been successfully transferred to <strong>'{destination}'</strong> using Robocopy.</p>
-                            <p>Transferred on behalf of: <strong>{transferUser}</strong></p>
-                            <p>Robocopy options used: <strong>{robocopyOptions}</strong></p>
-                            <p>If you did not authorize this transfer, please contact IT support immediately.</p>
-                        </div>
-                        <div class='footer'>
-                            <p>Company Name | IT Department</p>
-                            <p><a href='mailto:support@yourdomain.com'>Contact Support</a></p>
+                            <p>A request to transfer data has been submitted by <strong>{userName}</strong>.</p>
+                            {(string.IsNullOrEmpty(transferUser) ? "" : $"<p>The request was submitted on behalf of <strong>{transferUser}</strong>.</p>")}
+                            <p><strong>File saved at:</strong> {destinationFilePath}</p>
                         </div>
                     </body>
                 </html>";
