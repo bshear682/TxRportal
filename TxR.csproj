@@ -1,0 +1,158 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Mail;
+using System.Net;
+using System.Text;
+using System.Windows.Forms;
+
+namespace FileTransferApp
+{
+    public partial class MainForm : Form
+    {
+        private string selectedFilePath = string.Empty;
+
+        public MainForm()
+        {
+            InitializeComponent();
+            lblUser.Text = "Current User: " + Environment.UserName;
+            PopulateDestinations();
+            rbNo.Checked = true; // Default to 'No'
+            txtOtherUser.Enabled = false; // Disable textbox initially
+        }
+
+        private void btnBrowse_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            {
+                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    selectedFilePath = openFileDialog.FileName;
+                    txtFilePath.Text = selectedFilePath;
+                }
+            }
+        }
+
+        private void PopulateDestinations()
+        {
+            // Add predefined destination paths
+            cmbDestination.Items.Add("C:\\Users\\Public\\Documents");
+            cmbDestination.Items.Add("D:\\Shared\\Transfers");
+            cmbDestination.Items.Add("E:\\Backup");
+            cmbDestination.SelectedIndex = 0;
+        }
+
+        private string GetSelectedRobocopyOptions()
+        {
+            StringBuilder options = new StringBuilder();
+            if (rbE.Checked) options.Append(" /E");
+            if (rbZ.Checked) options.Append(" /Z");
+            if (rbMIR.Checked) options.Append(" /MIR");
+            if (rbXO.Checked) options.Append(" /XO");
+            if (rbXD.Checked) options.Append(" /XD Temp");
+            return options.ToString().Trim();
+        }
+
+        private void btnTransfer_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(selectedFilePath))
+            {
+                MessageBox.Show("Please select a file to transfer.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string destinationPath = cmbDestination.SelectedItem.ToString();
+            string robocopyOptions = GetSelectedRobocopyOptions();
+
+            string transferUser = rbYes.Checked ? txtOtherUser.Text.Trim() : Environment.UserName;
+            if (rbYes.Checked && string.IsNullOrEmpty(transferUser))
+            {
+                MessageBox.Show("Please enter the name of the person you are transferring the file for.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                RunRobocopy(selectedFilePath, destinationPath, robocopyOptions);
+                SendConfirmationEmail(Environment.UserName, Path.GetFileName(selectedFilePath), destinationPath, transferUser, robocopyOptions);
+                MessageBox.Show($"File transferred successfully to {destinationPath} on behalf of {transferUser} using Robocopy!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                txtFilePath.Clear();
+                txtOtherUser.Clear();
+                selectedFilePath = string.Empty;
+                rbNo.Checked = true; // Reset radio buttons
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message, "Transfer Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void RunRobocopy(string sourcePath, string destinationPath, string robocopyOptions)
+        {
+            Process robocopyProcess = new Process();
+            robocopyProcess.StartInfo.FileName = "cmd.exe";
+            robocopyProcess.StartInfo.Arguments = $"/c robocopy \"{Path.GetDirectoryName(sourcePath)}\" \"{destinationPath}\" \"{Path.GetFileName(sourcePath)}\" {robocopyOptions}";
+            robocopyProcess.StartInfo.UseShellExecute = false;
+            robocopyProcess.StartInfo.RedirectStandardOutput = true;
+            robocopyProcess.StartInfo.RedirectStandardError = true;
+            robocopyProcess.StartInfo.CreateNoWindow = true;
+            robocopyProcess.Start();
+            robocopyProcess.WaitForExit();
+        }
+
+        private void SendConfirmationEmail(string userName, string fileName, string destination, string transferUser, string robocopyOptions)
+        {
+            try
+            {
+                MailMessage mail = new MailMessage();
+                SmtpClient smtpServer = new SmtpClient("your-exchange-server"); // Replace with your local Exchange server address
+                
+                mail.From = new MailAddress("no-reply@yourdomain.com"); // Replace with your domain
+                mail.To.Add($"{userName}@yourdomain.com"); // Replace with actual domain
+                mail.Subject = "File Transfer Confirmation";
+                
+                string emailBody = $@"<html>
+                    <head>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; }}
+                            .header {{ background-color: #0073e6; color: white; padding: 10px; text-align: center; }}
+                            .content {{ padding: 15px; }}
+                            .footer {{ margin-top: 20px; font-size: 12px; color: #666; text-align: center; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class='header'>
+                            <h2>File Transfer Confirmation</h2>
+                        </div>
+                        <div class='content'>
+                            <p>Hello {userName},</p>
+                            <p>Your file <strong>'{fileName}'</strong> has been successfully transferred to <strong>'{destination}'</strong> using Robocopy.</p>
+                            <p>Transferred on behalf of: <strong>{transferUser}</strong></p>
+                            <p>Robocopy options used: <strong>{robocopyOptions}</strong></p>
+                            <p>If you did not authorize this transfer, please contact IT support immediately.</p>
+                        </div>
+                        <div class='footer'>
+                            <p>Company Name | IT Department</p>
+                            <p><a href='mailto:support@yourdomain.com'>Contact Support</a></p>
+                        </div>
+                    </body>
+                </html>";
+                
+                mail.Body = emailBody;
+                mail.IsBodyHtml = true;
+
+                smtpServer.Port = 25;
+                smtpServer.UseDefaultCredentials = true;
+                smtpServer.Credentials = CredentialCache.DefaultNetworkCredentials;
+                smtpServer.DeliveryMethod = SmtpDeliveryMethod.Network;
+                smtpServer.EnableSsl = false;
+
+                smtpServer.Send(mail);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to send email: " + ex.Message, "Email Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+}
